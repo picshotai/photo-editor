@@ -1,0 +1,48 @@
+import { route } from "@fal-ai/server-proxy/nextjs";
+import { NextRequest } from "next/server";
+import {
+  createRateLimiter,
+  RateLimiter,
+  shouldLimitRequest,
+} from "@/lib/ratelimit";
+import { checkBotId } from "botid/server";
+
+const limiter: RateLimiter = {
+  perMinute: createRateLimiter(5, "60 s"),
+  perHour: createRateLimiter(15, "60 m"),
+  perDay: createRateLimiter(50, "24 h"),
+};
+
+export const POST = async (req: NextRequest) => {
+  // Check for bot activity first
+  const verification = await checkBotId();
+  if (verification.isBot) {
+    return new Response("Access denied", { status: 403 });
+  }
+
+  // Apply rate limiting uniformly; authentication is managed server-side
+  const ip = req.headers.get("x-forwarded-for") || "";
+  const limiterResult = await shouldLimitRequest(limiter, ip);
+  if (limiterResult.shouldLimitRequest) {
+    return new Response(
+      `Rate limit exceeded per ${limiterResult.period}. Please try again later.`,
+      {
+        status: 429,
+        headers: {
+          "Content-Type": "text/plain",
+          "X-RateLimit-Limit":
+            limiterResult.period === "perMinute"
+              ? "10"
+              : limiterResult.period === "perHour"
+                ? "30"
+                : "100",
+          "X-RateLimit-Period": limiterResult.period,
+        },
+      },
+    );
+  }
+
+  return route.POST(req);
+};
+
+export const { GET, PUT } = route;
