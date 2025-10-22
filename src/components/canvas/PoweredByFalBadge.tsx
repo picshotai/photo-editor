@@ -1,6 +1,6 @@
 import React from "react";
 import Link from "next/link";
-import { LogoIcon } from "@/components/icons/logo";
+import Image from "next/image";
 
 export const PoweredByFalBadge: React.FC = () => {
   return (
@@ -8,12 +8,12 @@ export const PoweredByFalBadge: React.FC = () => {
       <Link
         href="https://fal.ai"
         target="_blank"
-        className="border bg-card p-2 flex flex-row rounded-xl gap-2 items-center"
+        className="border bg-card py-1 px-2 flex flex-row rounded-xl gap-2 items-center"
       >
-        <LogoIcon className="w-10 h-10" />
+        <Image src="/favicon-32x32.png" width={24} height={24} className="w-8 h-8 rounded-lg" alt="Unrealshot logo" />
         <div className="text-xs">
           Powered by <br />
-          <span className="font-bold text-xl">Fal</span>
+          <span className="font-bold text-sm">Unrealshot</span>
         </div>
       </Link>
     </div>

@@ -4,7 +4,6 @@ import { cn } from "@/lib/utils";
 
 interface MiniMapProps {
   images: PlacedImage[];
-  videos: PlacedVideo[];
   viewport: {
     x: number;
     y: number;
@@ -18,7 +17,6 @@ interface MiniMapProps {
 
 export const MiniMap: React.FC<MiniMapProps> = ({
   images,
-  videos,
   viewport,
   canvasSize,
 }) => {
@@ -36,13 +34,7 @@ export const MiniMap: React.FC<MiniMapProps> = ({
     maxY = Math.max(maxY, img.y + img.height);
   });
 
-  // videos
-  videos.forEach((vid) => {
-    minX = Math.min(minX, vid.x);
-    minY = Math.min(minY, vid.y);
-    maxX = Math.max(maxX, vid.x + vid.width);
-    maxY = Math.max(maxY, vid.y + vid.height);
-  });
+
 
   // If there are no elements, set default bounds
   if (
@@ -94,18 +86,6 @@ export const MiniMap: React.FC<MiniMapProps> = ({
           />
         ))}
 
-        {videos.map((vid) => (
-          <div
-            key={vid.id}
-            className="absolute bg-primary"
-            style={{
-              left: `${(vid.x - minX) * scale + offsetX}px`,
-              top: `${(vid.y - minY) * scale + offsetY}px`,
-              width: `${vid.width * scale}px`,
-              height: `${vid.height * scale}px`,
-            }}
-          />
-        ))}
 
         {/* Viewport indicator */}
         <div

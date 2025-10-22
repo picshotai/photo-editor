@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { rateLimitedProcedure, publicProcedure, router } from "../init";
-import { tracked, TRPCError } from "@trpc/server";
+import { tracked } from "@trpc/server";
 import { createFalClient } from "@fal-ai/client";
+import sharp from "sharp";
 
 const fal = createFalClient({
   credentials: () => process.env.FAL_KEY as string,
@@ -661,6 +662,174 @@ export const appRouter = router({
       }
     }),
 
+  isolateObject: publicProcedure
+    .input(
+      z.object({
+        imageUrl: z.string().url(),
+        textInput: z.string(),
+        apiKey: z.string().optional(),
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      try {
+        const falClient = await getFalClient(input.apiKey, ctx);
+
+        // Use the FAL client with EVF-SAM2 for segmentation
+        console.log("Using FAL client for EVF-SAM2...");
+        console.log("FAL_KEY present:", !!process.env.FAL_KEY);
+        console.log("Input:", {
+          imageUrl: input.imageUrl,
+          prompt: input.textInput,
+        });
+
+        // Use EVF-SAM2 to get the segmentation mask
+        const result = await falClient.subscribe("fal-ai/evf-sam", {
+          input: {
+            image_url: input.imageUrl,
+            prompt: input.textInput,
+            mask_only: true, // Get the binary mask
+            fill_holes: true, // Clean up the mask
+            expand_mask: 2, // Slightly expand to avoid cutting edges
+          },
+        });
+
+        console.log("FAL API Success Response:", result.data);
+
+        // Check if we got a valid mask
+        if (!result.data?.image?.url) {
+          throw new Error("No objects found matching the description");
+        }
+
+        // Download both the original image and the mask
+        console.log("Downloading original image and mask...");
+        const [originalBuffer, maskBuffer] = await Promise.all([
+          downloadImage(input.imageUrl),
+          downloadImage(result.data.image.url),
+        ]);
+
+        // Apply mask to original image
+        console.log("Applying mask to extract segmented object...");
+
+        // Load images with sharp
+        const originalImage = sharp(originalBuffer);
+        const maskImage = sharp(maskBuffer);
+
+        // Get metadata to ensure dimensions match
+        const [originalMetadata, maskMetadata] = await Promise.all([
+          originalImage.metadata(),
+          maskImage.metadata(),
+        ]);
+
+        console.log(
+          `Original image: ${originalMetadata.width}x${originalMetadata.height}`,
+        );
+        console.log(`Mask image: ${maskMetadata.width}x${maskMetadata.height}`);
+
+        // Resize mask to match original if needed
+        let processedMask = maskImage;
+        if (
+          originalMetadata.width !== maskMetadata.width ||
+          originalMetadata.height !== maskMetadata.height
+        ) {
+          console.log("Resizing mask to match original image dimensions...");
+          processedMask = maskImage.resize(
+            originalMetadata.width,
+            originalMetadata.height,
+          );
+        }
+
+        // Apply the mask as an alpha channel
+        // First ensure both images have alpha channels
+        const [rgbaOriginal, alphaMask] = await Promise.all([
+          originalImage
+            .ensureAlpha()
+            .raw()
+            .toBuffer({ resolveWithObject: true }),
+          processedMask
+            .grayscale() // Convert to single channel
+            .raw()
+            .toBuffer({ resolveWithObject: true }),
+        ]);
+
+        console.log("Original image buffer info:", rgbaOriginal.info);
+        console.log("Mask buffer info:", alphaMask.info);
+
+        // Create new image buffer with mask applied as alpha
+        const outputBuffer = Buffer.alloc(rgbaOriginal.data.length);
+
+        // Apply mask: copy RGB from original, use mask value as alpha
+        for (
+          let i = 0;
+          i < rgbaOriginal.info.width * rgbaOriginal.info.height;
+          i++
+        ) {
+          const rgbOffset = i * 4;
+          const maskOffset = i; // Grayscale mask has 1 channel
+
+          // Copy RGB values
+          outputBuffer[rgbOffset] = rgbaOriginal.data[rgbOffset]; // R
+          outputBuffer[rgbOffset + 1] = rgbaOriginal.data[rgbOffset + 1]; // G
+          outputBuffer[rgbOffset + 2] = rgbaOriginal.data[rgbOffset + 2]; // B
+
+          // Use mask value as alpha (white = opaque, black = transparent)
+          outputBuffer[rgbOffset + 3] = alphaMask.data[maskOffset];
+        }
+
+        // Create final image from the buffer
+        const segmentedImage = await sharp(outputBuffer, {
+          raw: {
+            width: rgbaOriginal.info.width,
+            height: rgbaOriginal.info.height,
+            channels: 4,
+          },
+        })
+          .png()
+          .toBuffer();
+
+        // Upload the segmented image to FAL storage
+        console.log("Uploading segmented image to storage...");
+        const blob = new Blob([new Uint8Array(segmentedImage)], {
+          type: "image/png",
+        });
+        const uploadResult = await falClient.storage.upload(blob);
+
+        // Return the URL of the segmented object
+        console.log("Returning segmented image URL:", uploadResult);
+        console.log("Original mask URL:", result.data.image.url);
+
+        return {
+          url: uploadResult,
+          maskUrl: result.data.image.url, // Also return mask URL for reference
+        };
+      } catch (error: any) {
+        console.error("Error isolating object:", error);
+        console.error("Error details:", {
+          message: error.message,
+          status: error.status,
+          body: error.body,
+          data: error.data,
+        });
+
+        // Check for enterprise-only error (shouldn't happen with EVF-SAM2)
+        if (
+          error.body?.detail?.includes("not enterprise ready") ||
+          error.message?.includes("not enterprise ready")
+        ) {
+          throw new Error(
+            "This model requires an enterprise FAL account. Please contact FAL support for access or use the 'Remove Background' feature instead.",
+          );
+        }
+
+        // Check for other specific error types
+        if (error.status === 403 || error.message?.includes("Forbidden")) {
+          throw new Error(
+            "API access denied. Please check your FAL API key permissions.",
+          );
+        }
+
+        throw new Error(error.message || "Failed to isolate object");
+      }
+    }),
 
 
   generateImageStream: publicProcedure
@@ -699,83 +868,47 @@ export const appRouter = router({
           data: { status: "Starting edit with nano-banana..." },
         });
 
-        // Sanitize image URL and prompt
-        const cleanUrl = String(input.imageUrl).trim().replace(/^`+|`+$/g, "");
-        const cleanPrompt = String(input.prompt ?? "").trim();
-
-        // Validate URL scheme before spending credits
-        try {
-          const parsed = new URL(cleanUrl);
-          if (!(parsed.protocol === "http:" || parsed.protocol === "https:")) {
-            throw new Error("URL must use http or https");
-          }
-        } catch (e: any) {
-          const status = e?.response?.status ?? e?.status;
-          const body = e?.response?.data ?? e?.body;
-          const is422 = status === 422;
-
-          // If FAL returns structured validation errors, surface friendlier messaging
-          if (is422 && body) {
-            try {
-              const detail = body?.detail ?? body?.error ?? body;
-              let message = "Validation failed";
-              if (Array.isArray(detail)) {
-                const tooLarge = detail.find((d: any) => d?.type === "image_too_large");
-                if (tooLarge) {
-                  const maxRes = tooLarge?.ctx?.max_resolution;
-                  message = `Input image resolution is too large. Max side length is ${maxRes}. Try cropping or reducing size.`;
-                }
-              }
-              throw new TRPCError({ code: "BAD_REQUEST", message, cause: body });
-            } catch (_) {
-              throw new TRPCError({ code: "BAD_REQUEST", message: "Unprocessable Entity", cause: body });
-            }
-          }
-
-          throw new TRPCError({
-            code: is422 ? "BAD_REQUEST" : "INTERNAL_SERVER_ERROR",
-            message: is422 ? "Unprocessable Entity" : "Failed to generate image",
-            cause: body ?? e,
-          });
-        }
-        // Build input strictly per official schema (no aspect_ratio)
-        const inputParams: any = {
-          prompt: cleanPrompt,
-          image_urls: [cleanUrl],
+        // Use subscribe (queue-based) for nano-banana/edit as per original approach
+        const baseInput = {
+          prompt: input.prompt,
+          image_urls: [input.imageUrl],
           num_images: 1,
-          output_format: "jpeg",
-        };
+          // Do NOT set output_format; it triggers 422 for this endpoint
+        } as any;
 
-        console.log("Calling fal-ai/nano-banana/edit with:", JSON.stringify(inputParams, null, 2));
+        let includeAspectUsed = !!input.aspectRatio;
+
+        // Emit a starting progress event to show activity
+        yield tracked(`${generationId}_progress_start`, {
+          type: "progress",
+          data: { status: "Submitting edit to nano-banana..." },
+        });
 
         let result: any;
         try {
           result = await falClient.subscribe("fal-ai/nano-banana/edit", {
-            input: inputParams,
+            input: includeAspectUsed
+              ? { ...baseInput, aspect_ratio: input.aspectRatio }
+              : baseInput,
             logs: true,
           });
         } catch (apiError: any) {
           console.error("FAL API Error for nano-banana/edit:", {
             message: apiError?.message,
             status: apiError?.status,
-            statusText: apiError?.statusText,
             body: apiError?.body,
             data: apiError?.data,
-            endpoint: "fal-ai/nano-banana/edit",
-            params: inputParams,
           });
-          // Surface validation errors clearly
-          const is422 = apiError?.status === 422 || String(apiError?.message).includes("Unprocessable Entity");
-          if (is422) {
-            const detail = apiError?.body?.detail ?? apiError?.data ?? apiError?.message;
-            const detailMsg = typeof detail === "object" ? JSON.stringify(detail) : String(detail || "Unknown validation error");
-            yield tracked(`${generationId}_error`, {
-              type: "error",
-              error: `nano-banana/edit validation failed: ${detailMsg}`,
+          // Retry without aspect_ratio on validation errors
+          if (apiError?.status === 422 && includeAspectUsed) {
+            includeAspectUsed = false;
+            result = await falClient.subscribe("fal-ai/nano-banana/edit", {
+              input: baseInput,
+              logs: true,
             });
-            return;
+          } else {
+            throw apiError;
           }
-          throw apiError;
         }
 
         const resultData = (result as any).data || result;

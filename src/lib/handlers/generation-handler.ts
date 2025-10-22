@@ -216,12 +216,17 @@ export const handleRun = async (deps: GenerationHandlerDeps) => {
         effectiveHeight = cropHeight * imgElement.naturalHeight;
       }
 
-      // Set canvas size to the original resolution (not display size)
-      canvas.width = effectiveWidth;
-      canvas.height = effectiveHeight;
+      // Cap extremely large images to avoid FAL 422 image_too_large
+      const MAX_SIDE = 4096; // safe cap to keep payloads reasonable
+      const maxOriginalSide = Math.max(effectiveWidth, effectiveHeight);
+      const scale = maxOriginalSide > MAX_SIDE ? MAX_SIDE / maxOriginalSide : 1;
+
+      // Set canvas size to capped resolution while preserving aspect ratio
+      canvas.width = Math.round(effectiveWidth * scale);
+      canvas.height = Math.round(effectiveHeight * scale);
 
       console.log(
-        `Processing image at ${canvas.width}x${canvas.height} (original res, display: ${img.width}x${img.height})`,
+        `Processing image at ${effectiveWidth}x${effectiveHeight}, scaled to ${canvas.width}x${canvas.height} (display: ${img.width}x${img.height})`,
       );
 
       // Always use the crop values (default to full image if not set)

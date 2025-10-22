@@ -6,11 +6,10 @@ import { Stage, Layer, Rect, Group, Line } from "react-konva";
 import Konva from "konva";
 import { canvasStorage, type CanvasState } from "@/lib/storage";
 import { motion, AnimatePresence } from "framer-motion";
+import Image from "next/image";
 
 import { Button } from "@/components/ui/button";
 import {
-  X,
-  Check,
   ImageIcon,
   Trash2,
   Undo,
@@ -52,33 +51,19 @@ import { createFalClient } from "@fal-ai/client";
 // Import extracted components
 import { ShortcutBadge } from "@/components/canvas/ShortcutBadge";
 import { StreamingImage } from "@/components/canvas/StreamingImage";
-import { StreamingVideo } from "@/components/canvas/StreamingVideo";
 import { CropOverlayWrapper } from "@/components/canvas/CropOverlayWrapper";
 import { CanvasImage } from "@/components/canvas/CanvasImage";
-import { CanvasVideo } from "@/components/canvas/CanvasVideo";
-import { VideoControls } from "@/components/canvas/VideoControls";
-
-import { VideoToVideoDialog } from "@/components/canvas/VideoToVideoDialog";
-import { ExtendVideoDialog } from "@/components/canvas/ExtendVideoDialog";
-import { RemoveVideoBackgroundDialog } from "@/components/canvas/VideoModelComponents";
-import { getVideoModelById } from "@/lib/video-models";
 
 // Import types
 import type {
   PlacedImage,
-  PlacedVideo,
   HistoryState,
   GenerationSettings,
-  VideoGenerationSettings,
   ActiveGeneration,
-  ActiveVideoGeneration,
   SelectionBox,
 } from "@/types/canvas";
 
-import {
-  imageToCanvasElement,
-  videoToCanvasElement,
-} from "@/utils/canvas-utils";
+import { imageToCanvasElement } from "@/utils/canvas-utils";
 import { checkOS } from "@/utils/os-utils";
 
 
@@ -92,7 +77,6 @@ import { MobileToolbar } from "@/components/canvas/MobileToolbar";
 import { PoweredByFalBadge } from "@/components/canvas/PoweredByFalBadge";
 import { CanvasContextMenu } from "@/components/canvas/CanvasContextMenu";
 import { useTheme } from "next-themes";
-import { VideoOverlays } from "@/components/canvas/VideoOverlays";
 import { DimensionDisplay } from "@/components/canvas/DimensionDisplay";
 
 
@@ -111,13 +95,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { GithubBadge } from "@/components/canvas/GithubBadge";
 import { GenerationsIndicator } from "@/components/generations-indicator";
 
 export default function OverlayPage() {
   const { theme, setTheme } = useTheme();
   const [images, setImages] = useState<PlacedImage[]>([]);
-  const [videos, setVideos] = useState<PlacedVideo[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isStorageLoaded, setIsStorageLoaded] = useState(false);
   const [visibleIndicators, setVisibleIndicators] = useState<Set<string>>(
@@ -135,9 +117,7 @@ export default function OverlayPage() {
   const [activeGenerations, setActiveGenerations] = useState<
     Map<string, ActiveGeneration>
   >(new Map());
-  const [activeVideoGenerations, setActiveVideoGenerations] = useState<
-    Map<string, ActiveVideoGeneration>
-  >(new Map());
+
   const [selectionBox, setSelectionBox] = useState<SelectionBox>({
     startX: 0,
     startY: 0,
@@ -152,9 +132,7 @@ export default function OverlayPage() {
     Map<string, { x: number; y: number }>
   >(new Map());
   const [isDraggingImage, setIsDraggingImage] = useState(false);
-  const [hiddenVideoControlsIds, setHiddenVideoControlsIds] = useState<
-    Set<string>
-  >(new Set());
+
   // Use a consistent initial value for server and client to avoid hydration errors
   const [canvasSize, setCanvasSize] = useState({
     width: 1200,
@@ -170,36 +148,13 @@ export default function OverlayPage() {
     scale: 1,
   });
   const stageRef = useRef<Konva.Stage>(null);
-  const [isolateTarget, setIsolateTarget] = useState<string | null>(null);
-  const [isolateInputValue, setIsolateInputValue] = useState("");
-  const [isIsolating, setIsIsolating] = useState(false);
+
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
   const [showGrid, setShowGrid] = useState(true);
   const [showMinimap, setShowMinimap] = useState(true);
 
 
 
-  const [isVideoToVideoDialogOpen, setIsVideoToVideoDialogOpen] =
-    useState(false);
-  const [selectedVideoForVideo, setSelectedVideoForVideo] = useState<
-    string | null
-  >(null);
-  const [isTransformingVideo, setIsTransformingVideo] = useState(false);
-  const [isExtendVideoDialogOpen, setIsExtendVideoDialogOpen] = useState(false);
-  const [selectedVideoForExtend, setSelectedVideoForExtend] = useState<
-    string | null
-  >(null);
-  const [isExtendingVideo, setIsExtendingVideo] = useState(false);
-  const [
-    isRemoveVideoBackgroundDialogOpen,
-    setIsRemoveVideoBackgroundDialogOpen,
-  ] = useState(false);
-  const [
-    selectedVideoForBackgroundRemoval,
-    setSelectedVideoForBackgroundRemoval,
-  ] = useState<string | null>(null);
-  const [isRemovingVideoBackground, setIsRemovingVideoBackground] =
-    useState(false);
 
   const [_, setIsSaving] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -220,12 +175,7 @@ export default function OverlayPage() {
   useEffect(() => {
     const currentCount =
       activeGenerations.size +
-      activeVideoGenerations.size +
-      (isGenerating ? 1 : 0) +
-      (isRemovingVideoBackground ? 1 : 0) +
-      (isIsolating ? 1 : 0) +
-      (isExtendingVideo ? 1 : 0) +
-      (isTransformingVideo ? 1 : 0);
+      (isGenerating ? 1 : 0);
 
     // If we went from having generations to having none, show success
     if (previousGenerationCount > 0 && currentCount === 0) {
@@ -240,13 +190,7 @@ export default function OverlayPage() {
     setPreviousGenerationCount(currentCount);
   }, [
     activeGenerations.size,
-    activeVideoGenerations.size,
     isGenerating,
-    isRemovingVideoBackground,
-    isIsolating,
-    isExtendingVideo,
-    isTransformingVideo,
-    previousGenerationCount,
   ]);
 
   // Create FAL client instance with proxy
@@ -264,384 +208,7 @@ export default function OverlayPage() {
 
 
 
-  // Function to handle the "Video to Video" option in the context menu
-  const handleVideoToVideo = (videoId: string) => {
-    const video = videos.find((vid) => vid.id === videoId);
-    if (!video) return;
 
-    setSelectedVideoForVideo(videoId);
-    setIsVideoToVideoDialogOpen(true);
-  };
-
-  // Function to handle the video-to-video transformation
-  const handleVideoToVideoTransformation = async (
-    settings: VideoGenerationSettings,
-  ) => {
-    if (!selectedVideoForVideo) return;
-
-    const video = videos.find((vid) => vid.id === selectedVideoForVideo);
-    if (!video) return;
-
-    try {
-      setIsTransformingVideo(true);
-
-      // Upload video if it's a data URL or local file
-      let videoUrl = video.src;
-      if (videoUrl.startsWith("data:") || videoUrl.startsWith("blob:")) {
-        const uploadResult = await falClient.storage.upload(
-          await (await fetch(videoUrl)).blob(),
-        );
-        videoUrl = uploadResult;
-      }
-
-      // Create a unique ID for this generation
-      const generationId = `vid2vid_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-
-      // Add to active generations
-      setActiveVideoGenerations((prev) => {
-        const newMap = new Map(prev);
-        newMap.set(generationId, {
-          ...settings, // Include all settings first
-          imageUrl: videoUrl, // Using imageUrl field for video URL
-          duration: video.duration || settings.duration || 5,
-          modelId: settings.modelId || "seedance-pro",
-          resolution: settings.resolution || "720p",
-          isVideoToVideo: true,
-          sourceVideoId: selectedVideoForVideo,
-        });
-        return newMap;
-      });
-
-      // Close the dialog
-      setIsVideoToVideoDialogOpen(false);
-
-      // Get video model name for toast display
-      let modelName = "Video Model";
-      const modelId = settings.modelId || "seedance-pro";
-      const { getVideoModelById } = await import("@/lib/video-models");
-      const model = getVideoModelById(modelId);
-      if (model) {
-        modelName = model.name;
-      }
-
-      // Create a persistent toast
-      const toastId = toast({
-        title: `Transforming video (${modelName} - ${settings.resolution || "Default"})`,
-        description: "This may take a minute...",
-        duration: Infinity,
-      }).id;
-
-      // Store the toast ID with the generation
-      setActiveVideoGenerations((prev) => {
-        const newMap = new Map(prev);
-        const generation = newMap.get(generationId);
-        if (generation) {
-          newMap.set(generationId, {
-            ...generation,
-            toastId,
-          });
-        }
-        return newMap;
-      });
-    } catch (error) {
-      console.error("Error starting video-to-video transformation:", error);
-      toast({
-        title: "Transformation failed",
-        description:
-          error instanceof Error
-            ? error.message
-            : "Failed to start transformation",
-        variant: "destructive",
-      });
-      setIsTransformingVideo(false);
-    }
-  };
-
-  // Function to handle the "Extend Video" option in the context menu
-  const handleExtendVideo = (videoId: string) => {
-    const video = videos.find((vid) => vid.id === videoId);
-    if (!video) return;
-
-    setSelectedVideoForExtend(videoId);
-    setIsExtendVideoDialogOpen(true);
-  };
-
-  // Function to handle the video extension
-  const handleVideoExtension = async (settings: VideoGenerationSettings) => {
-    if (!selectedVideoForExtend) return;
-
-    const video = videos.find((vid) => vid.id === selectedVideoForExtend);
-    if (!video) return;
-
-    try {
-      setIsExtendingVideo(true);
-
-      // Upload video if it's a data URL or local file
-      let videoUrl = video.src;
-      if (videoUrl.startsWith("data:") || videoUrl.startsWith("blob:")) {
-        const uploadResult = await falClient.storage.upload(
-          await (await fetch(videoUrl)).blob(),
-        );
-        videoUrl = uploadResult;
-      }
-
-      // Create a unique ID for this generation
-      const generationId = `vid_ext_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-
-      // Add to active generations
-      setActiveVideoGenerations((prev) => {
-        const newMap = new Map(prev);
-        newMap.set(generationId, {
-          ...settings, // Include all settings first
-          imageUrl: videoUrl, // Using imageUrl field for video URL
-          duration: video.duration || settings.duration || 5,
-          modelId: settings.modelId || "seedance-pro",
-          resolution: settings.resolution || "720p",
-          isVideoToVideo: true,
-          isVideoExtension: true,
-          sourceVideoId: selectedVideoForExtend,
-        });
-        return newMap;
-      });
-
-      // Close the dialog
-      setIsExtendVideoDialogOpen(false);
-
-      // Get video model name for toast display
-      let modelName = "Video Model";
-      const modelId = settings.modelId || "seedance-pro";
-      const { getVideoModelById } = await import("@/lib/video-models");
-      const model = getVideoModelById(modelId);
-      if (model) {
-        modelName = model.name;
-      }
-
-      // Create a persistent toast
-      const toastId = toast({
-        title: `Extending video (${modelName} - ${settings.resolution || "Default"})`,
-        description: "This may take a minute...",
-        duration: Infinity,
-      }).id;
-
-      // Store the toast ID with the generation
-      setActiveVideoGenerations((prev) => {
-        const newMap = new Map(prev);
-        const generation = newMap.get(generationId);
-        if (generation) {
-          newMap.set(generationId, {
-            ...generation,
-            toastId,
-          });
-        }
-        return newMap;
-      });
-    } catch (error) {
-      console.error("Error starting video extension:", error);
-      toast({
-        title: "Extension failed",
-        description:
-          error instanceof Error
-            ? error.message
-            : "Failed to start video extension",
-        variant: "destructive",
-      });
-      setIsExtendingVideo(false);
-    }
-  };
-
-  // Function to handle video generation completion
-  const handleVideoGenerationComplete = async (
-    videoId: string,
-    videoUrl: string,
-    duration: number,
-  ) => {
-    try {
-      console.log("Video generation complete:", {
-        videoId,
-        videoUrl,
-        duration,
-      });
-
-      // Get the generation data to check for source image ID
-      const generation = activeVideoGenerations.get(videoId);
-      const isBackgroundRemoval =
-        generation?.modelId === "bria-video-background-removal";
-
-      // Dismiss progress toast if it exists
-      if (generation?.toastId) {
-        const toastElement = document.querySelector(
-          `[data-toast-id="${generation.toastId}"]`,
-        );
-        if (toastElement) {
-          // Trigger dismiss by clicking the close button
-          const closeButton = toastElement.querySelector(
-            "[data-radix-toast-close]",
-          );
-          if (closeButton instanceof HTMLElement) {
-            closeButton.click();
-          }
-        }
-      }
-
-      if (generation?.sourceVideoId || generation?.isVideoToVideo) {
-        // This was a video-to-video transformation or extension
-        const sourceVideoId =
-          generation?.sourceVideoId ||
-          selectedVideoForVideo ||
-          selectedVideoForExtend;
-        const isExtension = generation?.isVideoExtension;
-
-        if (sourceVideoId) {
-          const sourceVideo = videos.find((vid) => vid.id === sourceVideoId);
-          if (sourceVideo) {
-            // Create a new video based on the source video
-            const newVideo: PlacedVideo = {
-              id: `video_${Date.now()}_${Math.random().toString(36).substring(7)}`,
-              src: videoUrl,
-              x: sourceVideo.x + sourceVideo.width + 20, // Position to the right
-              y: sourceVideo.y,
-              width: sourceVideo.width,
-              height: sourceVideo.height,
-              rotation: 0,
-              isPlaying: false,
-              currentTime: 0,
-              duration: duration,
-              volume: 1,
-              muted: false,
-              isLooping: false,
-              isVideo: true as const,
-            };
-
-            // Add the transformed video to the canvas
-            setVideos((prev) => [...prev, newVideo]);
-
-            // Save to history
-            saveToHistory();
-
-            if (isExtension) {
-              toast({
-                title: "Video extended successfully",
-                description:
-                  "The extended video has been added to the right of the source video.",
-              });
-            } else if (
-              generation?.modelId === "bria-video-background-removal"
-            ) {
-              toast({
-                title: "Background removed successfully",
-                description:
-                  "The video with removed background has been added to the right of the source video.",
-              });
-            } else {
-              toast({
-                title: "Video transformed successfully",
-                description:
-                  "The transformed video has been added to the right of the source video.",
-              });
-            }
-          } else {
-            console.error("Source video not found:", sourceVideoId);
-            toast({
-              title: "Error creating video",
-              description: "The source video could not be found.",
-              variant: "destructive",
-            });
-          }
-        }
-
-        // Reset the transformation/extension state
-        setIsTransformingVideo(false);
-        setSelectedVideoForVideo(null);
-        setIsExtendingVideo(false);
-        setSelectedVideoForExtend(null);
-      } else {
-        // This was a text-to-video generation
-        // For now, just log it as the placement function is missing
-        console.log("Generated video URL:", videoUrl);
-        toast({
-          title: "Video generated",
-          description: "Video is ready but cannot be placed on canvas yet.",
-        });
-      }
-
-      // Remove from active generations
-      setActiveVideoGenerations((prev) => {
-        const newMap = new Map(prev);
-        newMap.delete(videoId);
-        return newMap;
-      });
-
-      // Reset appropriate flags based on generation type
-      if (isBackgroundRemoval) {
-        setIsRemovingVideoBackground(false);
-      }
-    } catch (error) {
-      console.error("Error completing video generation:", error);
-
-      toast({
-        title: "Error creating video",
-        description:
-          error instanceof Error ? error.message : "Failed to create video",
-        variant: "destructive",
-      });
-
-      // Remove from active generations even on error
-      setActiveVideoGenerations((prev) => {
-        const newMap = new Map(prev);
-        newMap.delete(videoId);
-        return newMap;
-      });
-
-
-    }
-  };
-
-  // Function to handle video generation errors
-  const handleVideoGenerationError = (videoId: string, error: string) => {
-    console.error("Video generation error:", error);
-
-    // Check if this was a background removal
-    const generation = activeVideoGenerations.get(videoId);
-    const isBackgroundRemoval =
-      generation?.modelId === "bria-video-background-removal";
-
-    toast({
-      title: isBackgroundRemoval
-        ? "Background removal failed"
-        : "Video generation failed",
-      description: error,
-      variant: "destructive",
-    });
-
-    // Remove from active generations
-    setActiveVideoGenerations((prev) => {
-      const newMap = new Map(prev);
-      newMap.delete(videoId);
-      return newMap;
-    });
-
-    // Reset appropriate flags
-    if (isBackgroundRemoval) {
-      setIsRemovingVideoBackground(false);
-    } else {
-      setIsTransformingVideo(false);
-      setIsExtendingVideo(false);
-    }
-  };
-
-  // Function to handle video generation progress
-  const handleVideoGenerationProgress = (
-    videoId: string,
-    progress: number,
-    status: string,
-  ) => {
-    // You could update a progress indicator here if needed
-    console.log(`Video generation progress: ${progress}% - ${status}`);
-  };
-
-  const { mutateAsync: isolateObject } = useMutation(
-    trpc.isolateObject.mutationOptions(),
-  );
 
 
   // Save current state to storage
@@ -653,7 +220,6 @@ export default function OverlayPage() {
       const canvasState: CanvasState = {
         elements: [
           ...images.map(imageToCanvasElement),
-          ...videos.map(videoToCanvasElement),
         ],
         backgroundColor: "#ffffff",
         lastModified: Date.now(),
@@ -676,22 +242,9 @@ export default function OverlayPage() {
         }
       }
 
-      // Save video data to IndexedDB
-      for (const video of videos) {
-        // Skip if it's a placeholder for generation
-        if (
-          video.src.startsWith("data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP")
-        )
-          continue;
+    
 
-        // Check if we already have this video stored
-        const existingVideo = await canvasStorage.getVideo(video.id);
-        if (!existingVideo) {
-          await canvasStorage.saveVideo(video.src, video.duration, video.id);
-        }
-      }
-
-      // Clean up unused images and videos
+      // Clean up unused images 
       await canvasStorage.cleanupOldData();
 
       // Brief delay to show the indicator
@@ -700,7 +253,7 @@ export default function OverlayPage() {
       console.error("Failed to save to storage:", error);
       setIsSaving(false);
     }
-  }, [images, videos, viewport]);
+  }, [images,  viewport]);
 
   // Load state from storage
   const loadFromStorage = useCallback(async () => {
@@ -712,7 +265,6 @@ export default function OverlayPage() {
       }
 
       const loadedImages: PlacedImage[] = [];
-      const loadedVideos: PlacedVideo[] = [];
 
       for (const element of canvasState.elements) {
         if (element.type === "image" && element.imageId) {
@@ -734,43 +286,15 @@ export default function OverlayPage() {
               }),
             });
           }
-        } else if (element.type === "video" && element.videoId) {
-          const videoData = await canvasStorage.getVideo(element.videoId);
-          if (videoData) {
-            loadedVideos.push({
-              id: element.id,
-              src: videoData.originalDataUrl,
-              x: element.transform.x,
-              y: element.transform.y,
-              width: element.width || 300,
-              height: element.height || 300,
-              rotation: element.transform.rotation,
-              isVideo: true,
-              duration: element.duration || videoData.duration,
-              currentTime: element.currentTime || 0,
-              isPlaying: element.isPlaying || false,
-              volume: element.volume || 1,
-              muted: element.muted || false,
-              isLoaded: false, // Initialize as not loaded
-              ...(element.transform.cropBox && {
-                cropX: element.transform.cropBox.x,
-                cropY: element.transform.cropBox.y,
-                cropWidth: element.transform.cropBox.width,
-                cropHeight: element.transform.cropBox.height,
-              }),
-            });
-          }
-        }
+        } 
       }
 
-      // Set loaded images and videos
+      // Set loaded images 
       if (loadedImages.length > 0) {
         setImages(loadedImages);
       }
 
-      if (loadedVideos.length > 0) {
-        setVideos(loadedVideos);
-      }
+   
 
       // Restore viewport if available
       if (canvasState.viewport) {
@@ -834,21 +358,19 @@ export default function OverlayPage() {
   const saveToHistory = useCallback(() => {
     const newState = {
       images: [...images],
-      videos: [...videos],
       selectedIds: [...selectedIds],
     };
     const newHistory = history.slice(0, historyIndex + 1);
     newHistory.push(newState);
     setHistory(newHistory);
     setHistoryIndex(newHistory.length - 1);
-  }, [images, videos, selectedIds, history, historyIndex]);
+  }, [images, selectedIds, history, historyIndex]);
 
   // Undo
   const undo = useCallback(() => {
     if (historyIndex > 0) {
       const prevState = history[historyIndex - 1];
       setImages(prevState.images);
-      setVideos(prevState.videos || []);
       setSelectedIds(prevState.selectedIds);
       setHistoryIndex(historyIndex - 1);
     }
@@ -859,7 +381,6 @@ export default function OverlayPage() {
     if (historyIndex < history.length - 1) {
       const nextState = history[historyIndex + 1];
       setImages(nextState.images);
-      setVideos(nextState.videos || []);
       setSelectedIds(nextState.selectedIds);
       setHistoryIndex(historyIndex + 1);
     }
@@ -1524,21 +1045,11 @@ export default function OverlayPage() {
         );
       });
 
-      // Check for videos in the selection box
-      const selectedVideos = videos.filter((vid) => {
-        // Check if video intersects with selection box
-        return !(
-          vid.x + vid.width < box.x ||
-          vid.x > box.x + box.width ||
-          vid.y + vid.height < box.y ||
-          vid.y > box.y + box.height
-        );
-      });
+    
 
       // Combine selected images and videos
       const selectedIds = [
         ...selectedImages.map((img) => img.id),
-        ...selectedVideos.map((vid) => vid.id),
       ];
 
       if (selectedIds.length > 0) {
@@ -1555,6 +1066,15 @@ export default function OverlayPage() {
 
   // Handle context menu actions
   const handleRun = async () => {
+    if (selectedIds.length === 0) {
+      toast({
+        title: "Select an image first",
+        description: "Choose at least one image to edit.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     await handleRunHandler({
       images,
       selectedIds,
@@ -1574,7 +1094,6 @@ export default function OverlayPage() {
     // Save to history before deleting
     saveToHistory();
     setImages((prev) => prev.filter((img) => !selectedIds.includes(img.id)));
-    setVideos((prev) => prev.filter((vid) => !selectedIds.includes(vid.id)));
     setSelectedIds([]);
   };
 
@@ -1591,26 +1110,13 @@ export default function OverlayPage() {
       y: img.y + 20,
     }));
 
-    // Duplicate selected videos
-    const selectedVideos = videos.filter((vid) => selectedIds.includes(vid.id));
-    const newVideos = selectedVideos.map((vid) => ({
-      ...vid,
-      id: `vid-${Date.now()}-${Math.random()}`,
-      x: vid.x + 20,
-      y: vid.y + 20,
-      // Reset playback state for duplicated videos
-      currentTime: 0,
-      isPlaying: false,
-    }));
 
     // Update both arrays
     setImages((prev) => [...prev, ...newImages]);
-    setVideos((prev) => [...prev, ...newVideos]);
 
     // Select all duplicated items
     const newIds = [
       ...newImages.map((img) => img.id),
-      ...newVideos.map((vid) => vid.id),
     ];
     setSelectedIds(newIds);
   };
@@ -1627,125 +1133,21 @@ export default function OverlayPage() {
     });
   };
 
-  // Function to handle the "Remove Background from Video" option in the context menu
-  const handleRemoveVideoBackground = (videoId: string) => {
-    const video = videos.find((vid) => vid.id === videoId);
-    if (!video) return;
 
-    setSelectedVideoForBackgroundRemoval(videoId);
-    setIsRemoveVideoBackgroundDialogOpen(true);
-  };
 
-  // Function to handle the video background removal
-  const handleVideoBackgroundRemoval = async (backgroundColor: string) => {
-    if (!selectedVideoForBackgroundRemoval) return;
 
-    const video = videos.find(
-      (vid) => vid.id === selectedVideoForBackgroundRemoval,
-    );
-    if (!video) return;
 
-    try {
-      setIsRemovingVideoBackground(true);
+     
 
-      // Close the dialog
-      setIsRemoveVideoBackgroundDialogOpen(false);
+      
 
-      // Don't show a toast here - the StreamingVideo component will handle progress
+  
 
-      // Upload video if it's a data URL or blob URL
-      let videoUrl = video.src;
-      if (videoUrl.startsWith("data:") || videoUrl.startsWith("blob:")) {
-        const uploadResult = await falClient.storage.upload(
-          await (await fetch(videoUrl)).blob(),
-        );
-        videoUrl = uploadResult;
-      }
 
-      // Create a unique ID for this generation
-      const generationId = `bg_removal_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
-      // Map the background color to the API's expected format
-      const colorMap: Record<string, string> = {
-        transparent: "Transparent",
-        black: "Black",
-        white: "White",
-        gray: "Gray",
-        red: "Red",
-        green: "Green",
-        blue: "Blue",
-        yellow: "Yellow",
-        cyan: "Cyan",
-        magenta: "Magenta",
-        orange: "Orange",
-      };
+ 
 
-      // Map to API format
-      const apiBackgroundColor = colorMap[backgroundColor] || "Black";
-
-      // Add to active generations
-      setActiveVideoGenerations((prev) => {
-        const newMap = new Map(prev);
-        newMap.set(generationId, {
-          imageUrl: videoUrl,
-          prompt: `Removing background from video`,
-          duration: video.duration || 5,
-          modelId: "bria-video-background-removal",
-          modelConfig: getVideoModelById("bria-video-background-removal"),
-          sourceVideoId: video.id,
-          backgroundColor: apiBackgroundColor,
-        });
-        return newMap;
-      });
-
-      // Create a persistent toast that will stay visible until the conversion completes
-      const toastId = toast({
-        title: "Removing background from video",
-        description: "This may take several minutes...",
-        duration: Infinity, // Make the toast stay until manually dismissed
-      }).id;
-
-      // Store the toast ID with the generation for later reference
-      setActiveVideoGenerations((prev) => {
-        const newMap = new Map(prev);
-        const generation = newMap.get(generationId);
-        if (generation) {
-          newMap.set(generationId, {
-            ...generation,
-            toastId,
-          });
-        }
-        return newMap;
-      });
-
-      // Remove the direct API call since StreamingVideo will handle it
-      // The StreamingVideo component will handle the actual API call and progress updates
-    } catch (error) {
-      console.error("Error removing video background:", error);
-      toast({
-        title: "Error processing video",
-        description:
-          error instanceof Error ? error.message : "An error occurred",
-        variant: "destructive",
-      });
-
-      // Remove from active generations
-      setActiveVideoGenerations((prev) => {
-        const newMap = new Map(prev);
-        const generationId = Array.from(prev.keys()).find(
-          (key) =>
-            prev.get(key)?.sourceVideoId === selectedVideoForBackgroundRemoval,
-        );
-        if (generationId) {
-          newMap.delete(generationId);
-        }
-        return newMap;
-      });
-    } finally {
-      // Don't set isRemovingVideoBackground to false here - let the completion/error handlers do it
-      setSelectedVideoForBackgroundRemoval(null);
-    }
-  };
+ 
 
   const sendToFront = useCallback(() => {
     if (selectedIds.length === 0) return;
@@ -1831,228 +1233,7 @@ export default function OverlayPage() {
     });
   }, [selectedIds, saveToHistory]);
 
-  const handleIsolate = async () => {
-    if (!isolateTarget || !isolateInputValue.trim() || isIsolating) {
-      return;
-    }
 
-    setIsIsolating(true);
-
-    try {
-      const image = images.find((img) => img.id === isolateTarget);
-      if (!image) {
-        setIsIsolating(false);
-        return;
-      }
-
-      // Show loading state
-      toast({
-        title: "Processing...",
-        description: `Isolating "${isolateInputValue}" from image`,
-      });
-
-      // Process the image to get the cropped/processed version
-      const imgElement = new window.Image();
-      imgElement.crossOrigin = "anonymous"; // Enable CORS
-      imgElement.src = image.src;
-      await new Promise((resolve) => {
-        imgElement.onload = resolve;
-      });
-
-      // Create canvas for processing
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
-      if (!ctx) throw new Error("Failed to get canvas context");
-
-      // Get crop values
-      const cropX = image.cropX || 0;
-      const cropY = image.cropY || 0;
-      const cropWidth = image.cropWidth || 1;
-      const cropHeight = image.cropHeight || 1;
-
-      // Set canvas size based on crop
-      canvas.width = cropWidth * imgElement.naturalWidth;
-      canvas.height = cropHeight * imgElement.naturalHeight;
-
-      // Draw cropped image
-      ctx.drawImage(
-        imgElement,
-        cropX * imgElement.naturalWidth,
-        cropY * imgElement.naturalHeight,
-        cropWidth * imgElement.naturalWidth,
-        cropHeight * imgElement.naturalHeight,
-        0,
-        0,
-        canvas.width,
-        canvas.height,
-      );
-
-      // Convert to blob and upload
-      const blob = await new Promise<Blob>((resolve) => {
-        canvas.toBlob((blob) => resolve(blob!), "image/png");
-      });
-
-      const reader = new FileReader();
-      const dataUrl = await new Promise<string>((resolve) => {
-        reader.onload = (e) => resolve(e.target?.result as string);
-        reader.readAsDataURL(blob);
-      });
-
-      // Upload the processed image
-      const uploadResult = await uploadImageDirect(
-        dataUrl,
-        falClient,
-        toast,
-        
-      );
-
-      // Isolate object using EVF-SAM2
-      console.log("Calling isolateObject with:", {
-        imageUrl: uploadResult?.url || "",
-        textInput: isolateInputValue,
-      });
-
-      const result = await isolateObject({
-        imageUrl: uploadResult?.url || "",
-        textInput: isolateInputValue,
-        apiKey: undefined,
-      });
-
-      console.log("IsolateObject result:", result);
-
-      // Use the segmented image URL directly (backend already applied the mask)
-      if (result.url) {
-        console.log("Original image URL:", image.src);
-        console.log("New isolated image URL:", result.url);
-        console.log("Result object:", JSON.stringify(result, null, 2));
-
-        // AUTO DOWNLOAD FOR DEBUGGING
-        try {
-          const link = document.createElement("a");
-          link.href = result.url;
-          link.download = `isolated-${isolateInputValue}-${Date.now()}.png`;
-          link.target = "_blank"; // Open in new tab to see the image
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          console.log("Auto-downloaded isolated image for debugging");
-        } catch (e) {
-          console.error("Failed to auto-download:", e);
-        }
-
-        // Force load the new image before updating state
-        const testImg = new window.Image();
-        testImg.crossOrigin = "anonymous";
-        testImg.onload = () => {
-          console.log(
-            "New image loaded successfully:",
-            testImg.width,
-            "x",
-            testImg.height,
-          );
-
-          // Create a test canvas to verify the image has transparency
-          const testCanvas = document.createElement("canvas");
-          testCanvas.width = testImg.width;
-          testCanvas.height = testImg.height;
-          const testCtx = testCanvas.getContext("2d");
-          if (testCtx) {
-            // Fill with red background
-            testCtx.fillStyle = "red";
-            testCtx.fillRect(0, 0, testCanvas.width, testCanvas.height);
-            // Draw the image on top
-            testCtx.drawImage(testImg, 0, 0);
-
-            // Get a pixel from what should be transparent area (corner)
-            const pixelData = testCtx.getImageData(0, 0, 1, 1).data;
-            console.log("Corner pixel (should show red if transparent):", {
-              r: pixelData[0],
-              g: pixelData[1],
-              b: pixelData[2],
-              a: pixelData[3],
-            });
-          }
-
-          // Update the image in place with the segmented image
-          saveToHistory();
-
-          // Create a completely new image URL with timestamp
-          const newImageUrl = `${result.url}${result.url.includes("?") ? "&" : "?"}t=${Date.now()}&cache=no`;
-
-          // Get the current image to preserve position
-          const currentImage = images.find((img) => img.id === isolateTarget);
-          if (!currentImage) {
-            console.error("Could not find current image!");
-            return;
-          }
-
-          // Create new image with isolated- prefix ID
-          const newImage: PlacedImage = {
-            ...currentImage,
-            id: `isolated-${Date.now()}-${Math.random()}`,
-            src: newImageUrl,
-            // Remove crop values since we've applied them
-            cropX: undefined,
-            cropY: undefined,
-            cropWidth: undefined,
-            cropHeight: undefined,
-          };
-
-          setImages((prev) => {
-            // Replace old image with new one at same index
-            const newImages = [...prev];
-            const index = newImages.findIndex(
-              (img) => img.id === isolateTarget,
-            );
-            if (index !== -1) {
-              newImages[index] = newImage;
-            }
-            return newImages;
-          });
-
-          // Update selection
-          setSelectedIds([newImage.id]);
-
-          toast({
-            title: "Success",
-            description: `Isolated "${isolateInputValue}" successfully`,
-          });
-        };
-
-        testImg.onerror = (e) => {
-          console.error("Failed to load new image:", e);
-          toast({
-            title: "Failed to load isolated image",
-            description: "The isolated image could not be loaded",
-            variant: "destructive",
-          });
-        };
-
-        testImg.src = result.url;
-      } else {
-        toast({
-          title: "No object found",
-          description: `Could not find "${isolateInputValue}" in the image`,
-          variant: "destructive",
-        });
-      }
-
-      // Reset the isolate input
-      setIsolateTarget(null);
-      setIsolateInputValue("");
-      setIsIsolating(false);
-    } catch (error) {
-      console.error("Error isolating object:", error);
-      toast({
-        title: "Failed to isolate object",
-        description: error instanceof Error ? error.message : "Unknown error",
-        variant: "destructive",
-      });
-      setIsolateTarget(null);
-      setIsolateInputValue("");
-      setIsIsolating(false);
-    }
-  };
 
   const handleCombineImages = async () => {
     if (selectedIds.length < 2) return;
@@ -2452,15 +1633,7 @@ export default function OverlayPage() {
             className="pointer-events-none absolute top-0 bottom-0 right-0 w-24 bg-gradient-to-l from-background to-transparent z-10"
             aria-hidden="true"
           />
-          <ContextMenu
-            onOpenChange={(open) => {
-              if (!open) {
-                // Reset isolate state when context menu closes
-                setIsolateTarget(null);
-                setIsolateInputValue("");
-              }
-            }}
-          >
+          <ContextMenu>
             <ContextMenuTrigger asChild>
               <div
                 className="relative bg-background overflow-hidden w-full h-full"
@@ -2504,16 +1677,7 @@ export default function OverlayPage() {
                     onTouchMove={handleTouchMove}
                     onTouchEnd={handleTouchEnd}
                     onContextMenu={(e) => {
-                      // Check if this is a forwarded event from a video overlay
-                      const videoId =
-                        (e.evt as any)?.videoId || (e as any)?.videoId;
-                      if (videoId) {
-                        // This is a right-click on a video
-                        if (!selectedIds.includes(videoId)) {
-                          setSelectedIds([videoId]);
-                        }
-                        return;
-                      }
+                    
 
                       // Get clicked position
                       const stage = e.target.getStage();
@@ -2528,22 +1692,6 @@ export default function OverlayPage() {
                         y: (point.y - viewport.y) / viewport.scale,
                       };
 
-                      // Check if we clicked on a video first (check in reverse order for top-most)
-                      const clickedVideo = [...videos].reverse().find((vid) => {
-                        return (
-                          canvasPoint.x >= vid.x &&
-                          canvasPoint.x <= vid.x + vid.width &&
-                          canvasPoint.y >= vid.y &&
-                          canvasPoint.y <= vid.y + vid.height
-                        );
-                      });
-
-                      if (clickedVideo) {
-                        if (!selectedIds.includes(clickedVideo.id)) {
-                          setSelectedIds([clickedVideo.id]);
-                        }
-                        return;
-                      }
 
                       // Check if we clicked on an image (check in reverse order for top-most image)
                       const clickedImage = [...images].reverse().find((img) => {
@@ -2658,104 +1806,6 @@ export default function OverlayPage() {
                           />
                         ))}
 
-                      {/* Render videos */}
-                      {videos
-                        .filter((video) => {
-                          // Performance optimization: only render visible videos
-                          const buffer = 100; // pixels buffer
-                          const viewBounds = {
-                            left: -viewport.x / viewport.scale - buffer,
-                            top: -viewport.y / viewport.scale - buffer,
-                            right:
-                              (canvasSize.width - viewport.x) / viewport.scale +
-                              buffer,
-                            bottom:
-                              (canvasSize.height - viewport.y) /
-                                viewport.scale +
-                              buffer,
-                          };
-
-                          return !(
-                            video.x + video.width < viewBounds.left ||
-                            video.x > viewBounds.right ||
-                            video.y + video.height < viewBounds.top ||
-                            video.y > viewBounds.bottom
-                          );
-                        })
-                        .map((video) => (
-                          <CanvasVideo
-                            key={video.id}
-                            video={video}
-                            isSelected={selectedIds.includes(video.id)}
-                            onSelect={(e) => handleSelect(video.id, e)}
-                            onChange={(newAttrs) => {
-                              setVideos((prev) =>
-                                prev.map((vid) =>
-                                  vid.id === video.id
-                                    ? { ...vid, ...newAttrs }
-                                    : vid,
-                                ),
-                              );
-                            }}
-                            onDragStart={() => {
-                              // If dragging a selected item in a multi-selection, keep the selection
-                              // If dragging an unselected item, select only that item
-                              let currentSelectedIds = selectedIds;
-                              if (!selectedIds.includes(video.id)) {
-                                currentSelectedIds = [video.id];
-                                setSelectedIds(currentSelectedIds);
-                              }
-
-                              setIsDraggingImage(true);
-                              // Hide video controls during drag
-                              setHiddenVideoControlsIds(
-                                (prev) => new Set([...prev, video.id]),
-                              );
-                              // Save positions of all selected items
-                              const positions = new Map<
-                                string,
-                                { x: number; y: number }
-                              >();
-                              currentSelectedIds.forEach((id) => {
-                                const vid = videos.find((v) => v.id === id);
-                                if (vid) {
-                                  positions.set(id, { x: vid.x, y: vid.y });
-                                }
-                              });
-                              setDragStartPositions(positions);
-                            }}
-                            onDragEnd={() => {
-                              setIsDraggingImage(false);
-                              // Show video controls after drag ends
-                              setHiddenVideoControlsIds((prev) => {
-                                const newSet = new Set(prev);
-                                newSet.delete(video.id);
-                                return newSet;
-                              });
-                              saveToHistory();
-                              setDragStartPositions(new Map());
-                            }}
-                            selectedIds={selectedIds}
-                            videos={videos}
-                            setVideos={setVideos}
-                            isDraggingVideo={isDraggingImage}
-                            isCroppingVideo={false}
-                            dragStartPositions={dragStartPositions}
-                            onResizeStart={() =>
-                              setHiddenVideoControlsIds(
-                                (prev) => new Set([...prev, video.id]),
-                              )
-                            }
-                            onResizeEnd={() =>
-                              setHiddenVideoControlsIds((prev) => {
-                                const newSet = new Set(prev);
-                                newSet.delete(video.id);
-                                return newSet;
-                              })
-                            }
-                          />
-                        ))}
-
                       {/* Crop overlay */}
                       {croppingImageId &&
                         (() => {
@@ -2842,23 +1892,18 @@ export default function OverlayPage() {
             <CanvasContextMenu
           selectedIds={selectedIds}
           images={images}
-          videos={videos}
           isGenerating={isGenerating}
           generationSettings={generationSettings}
-          isolateInputValue={isolateInputValue}
-          isIsolating={isIsolating}
+
+
           handleRun={handleRun}
           handleDuplicate={handleDuplicate}
           handleRemoveBackground={handleRemoveBackground}
           handleCombineImages={handleCombineImages}
           handleDelete={handleDelete}
-          handleIsolate={handleIsolate}
-          handleVideoToVideo={handleVideoToVideo}
-          handleExtendVideo={handleExtendVideo}
-          handleRemoveVideoBackground={handleRemoveVideoBackground}
+
           setCroppingImageId={setCroppingImageId}
-          setIsolateInputValue={setIsolateInputValue}
-          setIsolateTarget={setIsolateTarget}
+
           sendToFront={sendToFront}
           sendToBack={sendToBack}
           bringForward={bringForward}
@@ -2868,15 +1913,17 @@ export default function OverlayPage() {
 
           <div className="absolute top-4 left-4 z-20 flex flex-col items-start gap-2">
             {/* Fal logo */}
-            <div className="md:hidden border bg-background/80 py-2 px-3 flex flex-row rounded-xl gap-2 items-center">
-              <Link
-                href="https://fal.ai"
-                target="_blank"
-                className="block transition-opacity"
-              >
-                <Logo className="h-8 w-16 text-foreground" />
-              </Link>
-            </div>
+           <Link
+        href="https://fal.ai"
+        target="_blank"
+        className="border bg-card py-1 px-2 flex flex-row rounded-xl gap-2 items-center"
+      >
+        <Image src="/favicon-32x32.png" width={24} height={24} className="w-8 h-8 rounded-lg" alt="Unrealshot logo" />
+        <div className="text-xs">
+          Powered by <br />
+          <span className="font-bold text-sm">Unrealshot</span>
+        </div>
+      </Link>
 
             {/* Mobile tool icons - animated based on selection */}
             <MobileToolbar
@@ -2908,14 +1955,7 @@ export default function OverlayPage() {
               <div className="flex flex-col gap-3 px-3 md:px-3 py-2 md:py-3 relative">
                 {/* Active generations indicator */}
                 <AnimatePresence mode="wait">
-                  {(activeGenerations.size > 0 ||
-                    activeVideoGenerations.size > 0 ||
-                    isGenerating ||
-                    isRemovingVideoBackground ||
-                    isIsolating ||
-                    isExtendingVideo ||
-                    isTransformingVideo ||
-                    showSuccess) && (
+                  {(activeGenerations.size > 0 || isGenerating || showSuccess) && (
                     <motion.div
                       key={showSuccess ? "success" : "generating"}
                       initial={{ opacity: 0, y: -10, scale: 0.9, x: "-50%" }}
@@ -2927,35 +1967,15 @@ export default function OverlayPage() {
                         "rounded-xl",
                         showSuccess
                           ? "shadow-[0_0_0_1px_rgba(34,197,94,0.2),0_4px_8px_-0.5px_rgba(34,197,94,0.08),0_8px_16px_-2px_rgba(34,197,94,0.04)] dark:shadow-none dark:border dark:border-green-500/30"
-                          : activeVideoGenerations.size > 0 ||
-                              isRemovingVideoBackground ||
-                              isExtendingVideo ||
-                              isTransformingVideo
-                            ? "shadow-[0_0_0_1px_rgba(168,85,247,0.2),0_4px_8px_-0.5px_rgba(168,85,247,0.08),0_8px_16px_-2px_rgba(168,85,247,0.04)] dark:shadow-none dark:border dark:border-purple-500/30"
-                            : "shadow-[0_0_0_1px_rgba(236,6,72,0.2),0_4px_8px_-0.5px_rgba(236,6,72,0.08),0_8px_16px_-2px_rgba(236,6,72,0.04)] dark:shadow-none dark:border dark:border-[#EC0648]/30",
+                          : "shadow-[0_0_0_1px_rgba(236,6,72,0.2),0_4px_8px_-0.5px_rgba(236,6,72,0.08),0_8px_16px_-2px_rgba(236,6,72,0.04)] dark:shadow-none dark:border dark:border-[#EC0648]/30",
                       )}
                     >
                       <GenerationsIndicator
                         isAnimating={!showSuccess}
                         isSuccess={showSuccess}
                         className="w-5 h-5"
-                        activeGenerationsSize={
-                          activeGenerations.size +
-                          activeVideoGenerations.size +
-                          (isGenerating ? 1 : 0) +
-                          (isRemovingVideoBackground ? 1 : 0) +
-                          (isIsolating ? 1 : 0) +
-                          (isExtendingVideo ? 1 : 0) +
-                          (isTransformingVideo ? 1 : 0)
-                        }
-                        outputType={
-                          activeVideoGenerations.size > 0 ||
-                          isRemovingVideoBackground ||
-                          isExtendingVideo ||
-                          isTransformingVideo
-                            ? "video"
-                            : "photo"
-                        }
+                        activeGenerationsSize={activeGenerations.size + (isGenerating ? 1 : 0)}
+                        outputType={"photo"}
                       />
                     </motion.div>
                   )}
@@ -3300,7 +2320,6 @@ export default function OverlayPage() {
           {showMinimap && (
             <MiniMap
               images={images}
-              videos={videos}
               viewport={viewport}
               canvasSize={canvasSize}
             />
@@ -3321,7 +2340,6 @@ export default function OverlayPage() {
           />
 
           <PoweredByFalBadge />
-          <GithubBadge />
 
           {/* Dimension display for selected images */}
           <DimensionDisplay
@@ -3434,78 +2452,14 @@ export default function OverlayPage() {
 
 
 
-      <VideoToVideoDialog
-        isOpen={isVideoToVideoDialogOpen}
-        onClose={() => {
-          setIsVideoToVideoDialogOpen(false);
-          setSelectedVideoForVideo(null);
-        }}
-        onConvert={handleVideoToVideoTransformation}
-        videoUrl={
-          selectedVideoForVideo
-            ? videos.find((vid) => vid.id === selectedVideoForVideo)?.src || ""
-            : ""
-        }
-        isConverting={isTransformingVideo}
-      />
 
-      <ExtendVideoDialog
-        isOpen={isExtendVideoDialogOpen}
-        onClose={() => {
-          setIsExtendVideoDialogOpen(false);
-          setSelectedVideoForExtend(null);
-        }}
-        onExtend={handleVideoExtension}
-        videoUrl={
-          selectedVideoForExtend
-            ? videos.find((vid) => vid.id === selectedVideoForExtend)?.src || ""
-            : ""
-        }
-        isExtending={isExtendingVideo}
-      />
 
-      <RemoveVideoBackgroundDialog
-        isOpen={isRemoveVideoBackgroundDialogOpen}
-        onClose={() => {
-          setIsRemoveVideoBackgroundDialogOpen(false);
-          setSelectedVideoForBackgroundRemoval(null);
-        }}
-        onProcess={handleVideoBackgroundRemoval}
-        videoUrl={
-          selectedVideoForBackgroundRemoval
-            ? videos.find((vid) => vid.id === selectedVideoForBackgroundRemoval)
-                ?.src || ""
-            : ""
-        }
-        videoDuration={
-          selectedVideoForBackgroundRemoval
-            ? videos.find((vid) => vid.id === selectedVideoForBackgroundRemoval)
-                ?.duration || 0
-            : 0
-        }
-        isProcessing={isRemovingVideoBackground}
-      />
 
-      {/* Video Generation Streaming Components */}
-      {Array.from(activeVideoGenerations.entries()).map(([id, generation]) => (
-        <StreamingVideo
-          key={id}
-          videoId={id}
-          generation={generation}
-          onComplete={handleVideoGenerationComplete}
-          onError={handleVideoGenerationError}
-          onProgress={handleVideoGenerationProgress}
-        />
-      ))}
 
-      {/* Video Controls Overlays */}
-      <VideoOverlays
-        videos={videos}
-        selectedIds={selectedIds}
-        viewport={viewport}
-        hiddenVideoControlsIds={hiddenVideoControlsIds}
-        setVideos={setVideos}
-      />
+
+
+
+
     </div>
   );
 }
