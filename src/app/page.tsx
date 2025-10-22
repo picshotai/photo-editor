@@ -57,7 +57,7 @@ import { CropOverlayWrapper } from "@/components/canvas/CropOverlayWrapper";
 import { CanvasImage } from "@/components/canvas/CanvasImage";
 import { CanvasVideo } from "@/components/canvas/CanvasVideo";
 import { VideoControls } from "@/components/canvas/VideoControls";
-import { ImageToVideoDialog } from "@/components/canvas/ImageToVideoDialog";
+
 import { VideoToVideoDialog } from "@/components/canvas/VideoToVideoDialog";
 import { ExtendVideoDialog } from "@/components/canvas/ExtendVideoDialog";
 import { RemoveVideoBackgroundDialog } from "@/components/canvas/VideoModelComponents";
@@ -80,7 +80,7 @@ import {
   videoToCanvasElement,
 } from "@/utils/canvas-utils";
 import { checkOS } from "@/utils/os-utils";
-import { convertImageToVideo } from "@/utils/video-utils";
+
 
 // Import additional extracted components
 import { useFalClient } from "@/hooks/useFalClient";
@@ -178,12 +178,7 @@ export default function OverlayPage() {
   const [showMinimap, setShowMinimap] = useState(true);
 
 
-  const [isImageToVideoDialogOpen, setIsImageToVideoDialogOpen] =
-    useState(false);
-  const [selectedImageForVideo, setSelectedImageForVideo] = useState<
-    string | null
-  >(null);
-  const [isConvertingToVideo, setIsConvertingToVideo] = useState(false);
+
   const [isVideoToVideoDialogOpen, setIsVideoToVideoDialogOpen] =
     useState(false);
   const [selectedVideoForVideo, setSelectedVideoForVideo] = useState<
@@ -265,90 +260,9 @@ export default function OverlayPage() {
     trpc.removeBackground.mutationOptions(),
   );
 
-  // Function to handle the "Convert to Video" option in the context menu
-  const handleConvertToVideo = (imageId: string) => {
-    const image = images.find((img) => img.id === imageId);
-    if (!image) return;
 
-    setSelectedImageForVideo(imageId);
-    setIsImageToVideoDialogOpen(true);
-  };
 
-  // Function to handle the image-to-video conversion
-  const handleImageToVideoConversion = async (
-    settings: VideoGenerationSettings,
-  ) => {
-    if (!selectedImageForVideo) return;
 
-    const image = images.find((img) => img.id === selectedImageForVideo);
-    if (!image) return;
-
-    try {
-      setIsConvertingToVideo(true);
-
-      // Upload image if it's a data URL
-      let imageUrl = image.src;
-      if (imageUrl.startsWith("data:")) {
-        const uploadResult = await falClient.storage.upload(
-          await (await fetch(imageUrl)).blob(),
-        );
-        imageUrl = uploadResult;
-      }
-
-      // Create a unique ID for this generation
-      const generationId = `img2vid_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-
-      // Add to active generations
-      setActiveVideoGenerations((prev) => {
-        const newMap = new Map(prev);
-        newMap.set(generationId, {
-          imageUrl,
-          prompt: settings.prompt || "",
-          duration: settings.duration || 5,
-          modelId: settings.modelId, // Add video modelId
-          resolution: settings.resolution || "720p",
-          cameraFixed: settings.cameraFixed,
-          seed: settings.seed,
-          sourceImageId: selectedImageForVideo, // Store the source image ID
-        });
-        return newMap;
-      });
-
-      // Clear the converting flag since it's now tracked in activeVideoGenerations
-      setIsConvertingToVideo(false);
-
-      // Close the dialog
-      setIsImageToVideoDialogOpen(false);
-
-      // Get video model name for toast display
-      let modelName = "Video Model";
-      const modelId = settings.modelId || "ltx-video"; // Default to ltx-video
-      const { getVideoModelById } = await import("@/lib/video-models");
-      const model = getVideoModelById(modelId);
-      if (model) {
-        modelName = model.name;
-      }
-
-      // Store the toast ID with the generation for later reference
-      setActiveVideoGenerations((prev) => {
-        const newMap = new Map(prev);
-        const generation = newMap.get(generationId);
-        if (generation) {
-          newMap.set(generationId, generation);
-        }
-        return newMap;
-      });
-    } catch (error) {
-      console.error("Error starting image-to-video conversion:", error);
-      toast({
-        title: "Conversion failed",
-        description:
-          error instanceof Error ? error.message : "Failed to start conversion",
-        variant: "destructive",
-      });
-      setIsConvertingToVideo(false);
-    }
-  };
 
   // Function to handle the "Video to Video" option in the context menu
   const handleVideoToVideo = (videoId: string) => {
@@ -550,7 +464,6 @@ export default function OverlayPage() {
 
       // Get the generation data to check for source image ID
       const generation = activeVideoGenerations.get(videoId);
-      const sourceImageId = generation?.sourceImageId || selectedImageForVideo;
       const isBackgroundRemoval =
         generation?.modelId === "bria-video-background-removal";
 
@@ -570,44 +483,7 @@ export default function OverlayPage() {
         }
       }
 
-      // Find the original image if this was an image-to-video conversion
-      if (sourceImageId) {
-        const image = images.find((img) => img.id === sourceImageId);
-        if (image) {
-          // Create a video element based on the original image
-          const video = convertImageToVideo(
-            image,
-            videoUrl,
-            duration,
-            false, // Don't replace the original image
-          );
-
-          // Position the video to the right of the source image
-          // Add a small gap between the image and video (20px)
-          video.x = image.x + image.width + 20;
-          video.y = image.y; // Keep the same vertical position
-
-          // Add the video to the videos state
-          setVideos((prev) => [...prev, { ...video, isVideo: true as const }]);
-
-          // Save to history
-          saveToHistory();
-
-          // Show success toast
-          toast({
-            title: "Video created successfully",
-            description:
-              "The video has been added to the right of the source image.",
-          });
-        } else {
-          console.error("Source image not found:", sourceImageId);
-          toast({
-            title: "Error creating video",
-            description: "The source image could not be found.",
-            variant: "destructive",
-          });
-        }
-      } else if (generation?.sourceVideoId || generation?.isVideoToVideo) {
+      if (generation?.sourceVideoId || generation?.isVideoToVideo) {
         // This was a video-to-video transformation or extension
         const sourceVideoId =
           generation?.sourceVideoId ||
@@ -698,9 +574,6 @@ export default function OverlayPage() {
       // Reset appropriate flags based on generation type
       if (isBackgroundRemoval) {
         setIsRemovingVideoBackground(false);
-      } else {
-        setIsConvertingToVideo(false);
-        setSelectedImageForVideo(null);
       }
     } catch (error) {
       console.error("Error completing video generation:", error);
@@ -719,8 +592,7 @@ export default function OverlayPage() {
         return newMap;
       });
 
-      setIsConvertingToVideo(false);
-      setSelectedImageForVideo(null);
+
     }
   };
 
@@ -752,7 +624,6 @@ export default function OverlayPage() {
     if (isBackgroundRemoval) {
       setIsRemovingVideoBackground(false);
     } else {
-      setIsConvertingToVideo(false);
       setIsTransformingVideo(false);
       setIsExtendingVideo(false);
     }
@@ -2969,31 +2840,30 @@ export default function OverlayPage() {
               </div>
             </ContextMenuTrigger>
             <CanvasContextMenu
-              selectedIds={selectedIds}
-              images={images}
-              videos={videos}
-              isGenerating={isGenerating}
-              generationSettings={generationSettings}
-              isolateInputValue={isolateInputValue}
-              isIsolating={isIsolating}
-              handleRun={handleRun}
-              handleDuplicate={handleDuplicate}
-              handleRemoveBackground={handleRemoveBackground}
-              handleCombineImages={handleCombineImages}
-              handleDelete={handleDelete}
-              handleIsolate={handleIsolate}
-              handleConvertToVideo={handleConvertToVideo}
-              handleVideoToVideo={handleVideoToVideo}
-              handleExtendVideo={handleExtendVideo}
-              handleRemoveVideoBackground={handleRemoveVideoBackground}
-              setCroppingImageId={setCroppingImageId}
-              setIsolateInputValue={setIsolateInputValue}
-              setIsolateTarget={setIsolateTarget}
-              sendToFront={sendToFront}
-              sendToBack={sendToBack}
-              bringForward={bringForward}
-              sendBackward={sendBackward}
-            />
+          selectedIds={selectedIds}
+          images={images}
+          videos={videos}
+          isGenerating={isGenerating}
+          generationSettings={generationSettings}
+          isolateInputValue={isolateInputValue}
+          isIsolating={isIsolating}
+          handleRun={handleRun}
+          handleDuplicate={handleDuplicate}
+          handleRemoveBackground={handleRemoveBackground}
+          handleCombineImages={handleCombineImages}
+          handleDelete={handleDelete}
+          handleIsolate={handleIsolate}
+          handleVideoToVideo={handleVideoToVideo}
+          handleExtendVideo={handleExtendVideo}
+          handleRemoveVideoBackground={handleRemoveVideoBackground}
+          setCroppingImageId={setCroppingImageId}
+          setIsolateInputValue={setIsolateInputValue}
+          setIsolateTarget={setIsolateTarget}
+          sendToFront={sendToFront}
+          sendToBack={sendToBack}
+          bringForward={bringForward}
+          sendBackward={sendBackward}
+        />
           </ContextMenu>
 
           <div className="absolute top-4 left-4 z-20 flex flex-col items-start gap-2">
@@ -3283,33 +3153,6 @@ export default function OverlayPage() {
                 <div className="flex items-center justify-between">
                   {/* Ratio selector for output image */}
                   <div className="flex items-center gap-2">
-                    
-                    <Select
-                      value={generationSettings.aspectRatio || "auto"}
-                      onValueChange={(value) =>
-                        setGenerationSettings({
-                          ...generationSettings,
-                          aspectRatio: value as any,
-                        })
-                      }
-                    >
-                      <SelectTrigger className="w-[160px]">
-                        <SelectValue placeholder="Auto (from image)" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="auto">Auto (from image)</SelectItem>
-                        <SelectItem value="1:1">1:1 (Square)</SelectItem>
-                        <SelectItem value="16:9">16:9 (Landscape)</SelectItem>
-                        <SelectItem value="9:16">9:16 (Portrait)</SelectItem>
-                        <SelectItem value="4:3">4:3</SelectItem>
-                        <SelectItem value="3:4">3:4</SelectItem>
-                        <SelectItem value="3:2">3:2</SelectItem>
-                        <SelectItem value="2:3">2:3</SelectItem>
-                        <SelectItem value="5:4">5:4</SelectItem>
-                        <SelectItem value="4:5">4:5</SelectItem>
-                        <SelectItem value="21:9">21:9</SelectItem>
-                      </SelectContent>
-                    </Select>
 
                     {/* Attachment button */}
                     <TooltipProvider>
@@ -3589,21 +3432,7 @@ export default function OverlayPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Image to Video Dialog */}
-      <ImageToVideoDialog
-        isOpen={isImageToVideoDialogOpen}
-        onClose={() => {
-          setIsImageToVideoDialogOpen(false);
-          setSelectedImageForVideo(null);
-        }}
-        onConvert={handleImageToVideoConversion}
-        imageUrl={
-          selectedImageForVideo
-            ? images.find((img) => img.id === selectedImageForVideo)?.src || ""
-            : ""
-        }
-        isConverting={isConvertingToVideo}
-      />
+
 
       <VideoToVideoDialog
         isOpen={isVideoToVideoDialogOpen}

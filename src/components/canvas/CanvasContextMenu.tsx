@@ -50,7 +50,6 @@ interface CanvasContextMenuProps {
   handleCombineImages: () => void;
   handleDelete: () => void;
   handleIsolate: () => void;
-  handleConvertToVideo?: (imageId: string) => void;
   handleVideoToVideo?: (videoId: string) => void;
   handleExtendVideo?: (videoId: string) => void;
   handleRemoveVideoBackground?: (videoId: string) => void;
@@ -77,7 +76,6 @@ export const CanvasContextMenu: React.FC<CanvasContextMenuProps> = ({
   handleCombineImages,
   handleDelete,
   handleIsolate,
-  handleConvertToVideo,
   handleVideoToVideo,
   handleExtendVideo,
   handleRemoveVideoBackground,
@@ -146,19 +144,7 @@ export const CanvasContextMenu: React.FC<CanvasContextMenuProps> = ({
         <Scissors className="h-4 w-4" />
         Remove Background
       </ContextMenuItem>
-      {selectedIds.length === 1 &&
-        handleConvertToVideo &&
-        images.some((img) => img.id === selectedIds[0]) && (
-          <ContextMenuItem
-            onClick={() => {
-              handleConvertToVideo(selectedIds[0]);
-            }}
-            className="flex items-center gap-2"
-          >
-            <Video className="h-4 w-4" />
-            Image to Video
-          </ContextMenuItem>
-        )}
+      {/* Image to Video option removed */}
       {/* Temporarily disabled Video to Video option
       {selectedIds.length === 1 &&
         handleVideoToVideo &&
